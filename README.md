@@ -2,7 +2,7 @@
 docker build -t sim .
 ```
 ```bash
-docker run -it --rm \   
+docker run -it --rm \
   -p 8080:80 --name my-sim sim
 ```
 

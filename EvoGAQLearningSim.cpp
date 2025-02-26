@@ -2,6 +2,8 @@
  * 進化シミュレーション + 遺伝的アルゴリズム (GA) + 簡易Q学習 (RL)
  * 
  * 「毒耐性付き＋Q学習ロジック改善」バージョン
+ * 
+ * ※ 元のコードから “少し死ににくく” なるように調整
  ************************************************************/
 
 #include <SFML/Graphics.hpp>
@@ -151,7 +153,6 @@ private:
     // 近くに「食料(弱い生物 or 植物)」がいるか, 
     // 近くに「強い捕食者」がいるか
     // → 2ビット(4状態)はそのまま使う例
-    // 改良したい場合はここを拡張してもOK
     static const int NUM_STATES  = 4; // 00,01,10,11
     static const int NUM_ACTIONS = 4; // 前進,左旋回,右旋回,停止
 
@@ -198,7 +199,12 @@ public:
              const std::vector<std::shared_ptr<Entity>>* allEntities)
         : genes(g), generation(gen), position(pos),
           direction(getRandomFloat(0.f, 360.f)),
-          alive(true), energy(50.f), reproductionCoolDown(0.f),
+          alive(true),
+          // -----------------------------
+          // 調整1: 初期エネルギーを増やす (50.f → 70.f)
+          // -----------------------------
+          energy(60.f),
+          reproductionCoolDown(0.f),
           pAllEntities(allEntities)
     {
         // Qテーブルを0初期化
@@ -226,11 +232,13 @@ public:
     void update(float deltaTime) override {
         if(!alive) return;
 
-        // 時間経過ペナルティ: 小さめに(生存コスト)
+        // 時間経過ペナルティ: 小さめの報酬(負) - ここを減らして死ににくくする
         float reward = -0.002f;
 
-        // エネルギー消費
-        energy -= deltaTime * 0.5f; 
+        // -----------------------------------------------------
+        // 調整2: エネルギー消費を抑える (0.5f → 0.3f)
+        // -----------------------------------------------------
+        energy -= deltaTime * 0.4f; 
         if (energy <= 0.f) {
             alive = false;
             // 死亡時ペナルティ
@@ -630,8 +638,10 @@ int main()
                     auto plant = std::dynamic_pointer_cast<Plant>(e2);
                     if(plant) {
                         plant->onEaten();
-                        // 植物を食べた回復量
-                        c1->addEnergy(15.f);
+                        // -----------------------------
+                        // 調整3: 植物を食べたときの回復量を増やす (15.f → 20.f)
+                        // -----------------------------
+                        c1->addEnergy(20.f);
                         // 報酬
                         c1->givePositiveReward(5.f);
                     } else {
@@ -643,7 +653,11 @@ int main()
                             float atk2 = c2->getAttackPower();
                             if(atk1 > atk2) {
                                 c2->onEaten();
-                                c1->addEnergy(25.f);
+                                // -----------------------------
+                                // 調整4: 他クリーチャを食べたときの回復量を増やす
+                                //       (25.f → 30.f)
+                                // -----------------------------
+                                c1->addEnergy(30.f);
                                 c1->givePositiveReward(10.f);
 
                                 // 毒ダメージ(軽減あり)
@@ -653,7 +667,7 @@ int main()
                                 }
                             } else if(atk1 < atk2) {
                                 c1->onEaten();
-                                c2->addEnergy(25.f);
+                                c2->addEnergy(30.f);
                                 c2->givePositiveReward(10.f);
 
                                 if(c1->isPoisonous()) {
@@ -750,6 +764,8 @@ int main()
             int maxGen = 0;
             std::map<std::string, int> speciesCount;
 
+            int plantCount2=0; // こちらはUI用
+
             for(auto& e : entities){
                 auto c = std::dynamic_pointer_cast<Creature>(e);
                 if(c) {
@@ -762,6 +778,13 @@ int main()
                     }
                     speciesCount[c->getSpeciesName()]++;
                 }
+                else {
+                    // 植物数をカウント
+                    auto p = std::dynamic_pointer_cast<Plant>(e);
+                    if(p) {
+                        plantCount2++;
+                    }
+                }
             }
 
             float avgQ = (qCount > 0) ? (totalQ / qCount) : 0.f;
@@ -769,7 +792,7 @@ int main()
             std::string info;
             info += "FPS: " + std::to_string((int)fps) + "\n";
             info += "Creature: " + std::to_string(creatureCount) + "\n";
-            info += "Plant:    " + std::to_string(plantCount) + "\n";
+            info += "Plant:    " + std::to_string(plantCount2) + "\n";
             info += "Max Gen:  " + std::to_string(maxGen) + "\n";
             info += "Avg Q:    " + std::to_string(avgQ) + "\n";
 

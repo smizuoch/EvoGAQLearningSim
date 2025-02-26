@@ -3,7 +3,8 @@
  * 
  * 「毒耐性付き＋Q学習ロジック改善」バージョン
  * 
- * ※ 元のコードから “少し死ににくく” なるように調整
+ * ※ 「死に方」に応じてペナルティを変動させ、
+ *    子孫を残して死んだ場合などはペナルティを軽減する
  ************************************************************/
 
 #include <SFML/Graphics.hpp>
@@ -150,9 +151,6 @@ private:
     //------------------------------------------------------
     // Q学習関連
     //------------------------------------------------------
-    // 近くに「食料(弱い生物 or 植物)」がいるか, 
-    // 近くに「強い捕食者」がいるか
-    // → 2ビット(4状態)はそのまま使う例
     static const int NUM_STATES  = 4; // 00,01,10,11
     static const int NUM_ACTIONS = 4; // 前進,左旋回,右旋回,停止
 
@@ -169,10 +167,6 @@ private:
     // 遺伝子
     //------------------------------------------------------
     Genes genes;
-
-    //------------------------------------------------------
-    // 世代
-    //------------------------------------------------------
     int generation;
 
     //------------------------------------------------------
@@ -187,24 +181,28 @@ private:
     float reproductionCoolDown;
 
     //------------------------------------------------------
-    // 他Entityへの参照リストを外部から受け取れるように
-    // (observeStateで周囲のチェックをするため)
+    // ★追加: 生存時間・子孫数
+    //------------------------------------------------------
+    float lifetime;       // 生存時間 (秒)
+    int   offspringCount; // 産んだ子孫の数
+
+    //------------------------------------------------------
+    // すべての Entity への参照
     //------------------------------------------------------
     const std::vector<std::shared_ptr<Entity>>* pAllEntities;
 
 public:
-    // コンストラクタで全Entityリスト参照も受け取る
+    // コンストラクタ
     Creature(const Genes& g, sf::Vector2f pos, sf::Color color,
              int gen,
              const std::vector<std::shared_ptr<Entity>>* allEntities)
         : genes(g), generation(gen), position(pos),
           direction(getRandomFloat(0.f, 360.f)),
           alive(true),
-          // -----------------------------
-          // 調整1: 初期エネルギーを少し増やす (50.f → 60.f)
-          // -----------------------------
           energy(60.f),
           reproductionCoolDown(0.f),
+          lifetime(0.f),          // ★追加
+          offspringCount(0),      // ★追加
           pAllEntities(allEntities)
     {
         // Qテーブルを0初期化
@@ -214,7 +212,7 @@ public:
             }
         }
         // ε-greedyのパラメータ
-        epsilon = 0.2f;  // 必要に応じて下げてみる
+        epsilon = 0.2f;  
         alpha   = 0.1f;
         gamma   = 0.9f;
 
@@ -232,18 +230,25 @@ public:
     void update(float deltaTime) override {
         if(!alive) return;
 
-        // 時間経過ペナルティ: 小さめの報酬(負) 
+        // ★生存時間を加算
+        lifetime += deltaTime;
+
+        // 時間経過に応じた報酬(微小な負)
         float reward = -0.002f;
 
-        // -----------------------------------------------------
-        // 調整2: エネルギー消費を少し抑える (0.5f → 0.4f)
-        // -----------------------------------------------------
+        // エネルギー消費
         energy -= deltaTime * 0.4f; 
         if (energy <= 0.f) {
             alive = false;
-            // 死亡時ペナルティ
-            reward -= 10.f;
-            updateQ(reward);
+            // ★死亡時(エネルギー切れ)の最終報酬
+            //   早死に & 子孫ゼロだと大きなマイナス
+            //   子孫を残していれば多少緩和
+            float finalReward = -10.f;            // 基本ペナルティ
+            finalReward += offspringCount * 5.f;  // 子孫1体につき +5
+            finalReward += lifetime * 0.1f;       // 長く生きるほど + (0.1 × 秒)
+
+            // 前フレーム分と合算
+            updateQ(reward + finalReward);
             return;
         }
 
@@ -282,10 +287,16 @@ public:
         return shape.getRadius();
     }
 
+    // ★捕食されたときの処理
     void onEaten() override {
         alive = false;
         // 捕食された時のペナルティ
-        updateQ(-40.f);
+        // ただし子孫を残していれば多少緩和する
+        float finalReward = -40.f;                // 基本ペナルティ
+        finalReward += offspringCount * 5.f;      // 子孫につき +5
+        finalReward += lifetime * 0.1f;           // 生存時間に応じ +0.1 × 秒
+
+        updateQ(finalReward);
     }
 
     // -----------------------------------------------------
@@ -342,6 +353,12 @@ public:
         // Qテーブルの継承
         child->inheritQ(*this, *other);
 
+        // ★子孫を増やした数をカウント
+        this->offspringCount += 1; 
+        if (other.get() != this) {
+            other->offspringCount += 1;
+        }
+
         return child;
     }
 
@@ -382,13 +399,11 @@ public:
 
         std::string legsStr = "Leg" + std::to_string(genes.legs);
 
-        // 毒耐性のカテゴリ(3段階ぐらいにわけてみる)
         std::string resistCat;
         if(genes.poisonResistance < 0.33f)      resistCat = "LowRes";
         else if(genes.poisonResistance < 0.66f) resistCat = "MidRes";
         else                                    resistCat = "HighRes";
 
-        // 例: "Slow_LowAtk_NonPois_Leg2_LowRes"
         return speedCat + "_" + attackCat + "_" + poisonCat + "_" + legsStr + "_" + resistCat;
     }
 
@@ -417,21 +432,17 @@ private:
         bool foodNear = false;
         bool predatorNear = false;
 
-        // senseRange 内に「食べられる(植物 or 攻撃力が自分より低いCreature)」がいるかチェック
-        // senseRange 内に「自分より攻撃力が高いCreature」がいるかチェック
         if (!pAllEntities) {
-            // もし参照がなければ従来通りランダムに
+            // 参照がなければ適当に
             if (rand()%100 < 8)  foodNear = true;
             if (rand()%100 < 5)  predatorNear = true;
         } else {
-            float sr2 = genes.senseRange * genes.senseRange; // 2乗で比較
+            float sr2 = genes.senseRange * genes.senseRange; 
             for (auto& e : *pAllEntities) {
                 if(!e->isAlive()) continue;
                 if(e.get() == this) continue;
-
-                // 距離判定
                 float dist2 = distance2(this->position, e->getPosition());
-                if(dist2 > sr2) continue; // 範囲外
+                if(dist2 > sr2) continue; 
 
                 // Plant判定
                 auto plant = std::dynamic_pointer_cast<Plant>(e);
@@ -449,7 +460,6 @@ private:
                         predatorNear = true;
                     }
                 }
-                // 一度 foodNear/predatorNear が true になれば十分
                 if(foodNear && predatorNear) break;
             }
         }
@@ -569,7 +579,7 @@ int main()
         g.poison          = (rand()%100 < 30);
         g.legs            = rand()%4 + 1;
         g.senseRange      = getRandomFloat(50.f, 150.f);
-        g.poisonResistance= getRandomFloat(0.f, 1.f); // 初期ランダム
+        g.poisonResistance= getRandomFloat(0.f, 1.f); 
 
         float x = getRandomFloat(100.f, 700.f);
         float y = getRandomFloat(100.f, 500.f);
@@ -599,7 +609,7 @@ int main()
     float fpsInterval = 0.5f;
     int frameCount = 0;
 
-    // ▼ ここが追加ポイント：アプリ開始からの経過時間を測定
+    // アプリ開始からの経過時間
     float totalElapsedTime = 0.0f; 
 
     while (window.isOpen()) {
@@ -611,7 +621,6 @@ int main()
         }
 
         float dt = frameClock.restart().asSeconds();
-        // 総経過時間を加算
         totalElapsedTime += dt;
 
         // FPS 計測
@@ -645,29 +654,18 @@ int main()
                     auto plant = std::dynamic_pointer_cast<Plant>(e2);
                     if(plant) {
                         plant->onEaten();
-                        // -----------------------------
-                        // 調整3: 植物を食べたときの回復量を増やす (15.f → 20.f)
-                        // -----------------------------
-                        c1->addEnergy(20.f);
-                        // 報酬
+                        c1->addEnergy(15.f);
                         c1->givePositiveReward(5.f);
                     } else {
                         // Creature
                         auto c2 = std::dynamic_pointer_cast<Creature>(e2);
                         if(c2) {
-                            // 攻撃力比較
                             float atk1 = c1->getAttackPower();
                             float atk2 = c2->getAttackPower();
                             if(atk1 > atk2) {
                                 c2->onEaten();
-                                // -----------------------------
-                                // 調整4: 他クリーチャを食べたときの回復量を増やす
-                                //       (25.f → 30.f)
-                                // -----------------------------
-                                c1->addEnergy(30.f);
+                                c1->addEnergy(25.f);
                                 c1->givePositiveReward(10.f);
-
-                                // 毒ダメージ(軽減あり)
                                 if(c2->isPoisonous()) {
                                     float poisonDmg = 12.f * (1.f - c1->getPoisonResistance());
                                     c1->addEnergy(-poisonDmg);
@@ -676,13 +674,12 @@ int main()
                                 c1->onEaten();
                                 c2->addEnergy(30.f);
                                 c2->givePositiveReward(10.f);
-
                                 if(c1->isPoisonous()) {
                                     float poisonDmg = 12.f * (1.f - c2->getPoisonResistance());
                                     c2->addEnergy(-poisonDmg);
                                 }
                             }
-                            // 同じ攻撃力の場合は何もしない(共倒れなし)とする
+                            // 同じ攻撃力の場合は何もしない
                         }
                     }
                 }
@@ -757,7 +754,7 @@ int main()
             e->draw(window);
         }
 
-        // UI (FPS, 数表示, 世代, 学習状況, 種族別個体数, 経過時間)
+        // UI表示
         {
             // UIパネル
             sf::RectangleShape uiPanel(sf::Vector2f(220.f, 340.f));
@@ -771,7 +768,7 @@ int main()
             int maxGen = 0;
             std::map<std::string, int> speciesCount;
 
-            int plantCount2=0; // こちらはUI表示用
+            int plantCount2=0; 
 
             for(auto& e : entities){
                 auto c = std::dynamic_pointer_cast<Creature>(e);
@@ -786,7 +783,6 @@ int main()
                     speciesCount[c->getSpeciesName()]++;
                 }
                 else {
-                    // 植物数をカウント
                     auto p = std::dynamic_pointer_cast<Plant>(e);
                     if(p) {
                         plantCount2++;
@@ -807,11 +803,10 @@ int main()
             info += "Plant:    " + std::to_string(plantCount2) + "\n";
             info += "Max Gen:  " + std::to_string(maxGen) + "\n";
             info += "Avg Q:    " + std::to_string(avgQ) + "\n";
-            // 経過時間を表示
             info += "Time: " + std::to_string(h) + "h"
-                          + std::to_string(m) + "m"
-                          + std::to_string(s) + "s\n";
-            
+                                 + std::to_string(m) + "m"
+                                 + std::to_string(s) + "s\n";
+
             info += "\n--- Species Count ---\n";
             for(const auto& kv : speciesCount) {
                 info += kv.first + ": " + std::to_string(kv.second) + "\n";

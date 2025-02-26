@@ -201,7 +201,7 @@ public:
           direction(getRandomFloat(0.f, 360.f)),
           alive(true),
           // -----------------------------
-          // 調整1: 初期エネルギーを増やす (50.f → 70.f)
+          // 調整1: 初期エネルギーを少し増やす (50.f → 60.f)
           // -----------------------------
           energy(60.f),
           reproductionCoolDown(0.f),
@@ -232,11 +232,11 @@ public:
     void update(float deltaTime) override {
         if(!alive) return;
 
-        // 時間経過ペナルティ: 小さめの報酬(負) - ここを減らして死ににくくする
+        // 時間経過ペナルティ: 小さめの報酬(負) 
         float reward = -0.002f;
 
         // -----------------------------------------------------
-        // 調整2: エネルギー消費を抑える (0.5f → 0.3f)
+        // 調整2: エネルギー消費を少し抑える (0.5f → 0.4f)
         // -----------------------------------------------------
         energy -= deltaTime * 0.4f; 
         if (energy <= 0.f) {
@@ -592,12 +592,15 @@ int main()
         entities.push_back(plant);
     }
 
-    // FPS計測
-    sf::Clock clock;
+    // FPS計測用
+    sf::Clock frameClock;
     float fps = 0.f;
     float fpsTimer = 0.f;
     float fpsInterval = 0.5f;
     int frameCount = 0;
+
+    // ▼ ここが追加ポイント：アプリ開始からの経過時間を測定
+    float totalElapsedTime = 0.0f; 
 
     while (window.isOpen()) {
         sf::Event ev;
@@ -607,7 +610,11 @@ int main()
             }
         }
 
-        float dt = clock.restart().asSeconds();
+        float dt = frameClock.restart().asSeconds();
+        // 総経過時間を加算
+        totalElapsedTime += dt;
+
+        // FPS 計測
         fpsTimer += dt;
         frameCount++;
         if(fpsTimer >= fpsInterval){
@@ -750,10 +757,10 @@ int main()
             e->draw(window);
         }
 
-        // UI (FPS, 数表示, 世代, 学習状況, 種族別個体数)
+        // UI (FPS, 数表示, 世代, 学習状況, 種族別個体数, 経過時間)
         {
             // UIパネル
-            sf::RectangleShape uiPanel(sf::Vector2f(220.f, 320.f));
+            sf::RectangleShape uiPanel(sf::Vector2f(220.f, 340.f));
             uiPanel.setFillColor(sf::Color(255,255,255,180));
             uiPanel.setPosition(20.f,20.f);
             window.draw(uiPanel);
@@ -764,7 +771,7 @@ int main()
             int maxGen = 0;
             std::map<std::string, int> speciesCount;
 
-            int plantCount2=0; // こちらはUI用
+            int plantCount2=0; // こちらはUI表示用
 
             for(auto& e : entities){
                 auto c = std::dynamic_pointer_cast<Creature>(e);
@@ -789,13 +796,22 @@ int main()
 
             float avgQ = (qCount > 0) ? (totalQ / qCount) : 0.f;
 
+            // 経過時間を h, m, s に分解
+            int h = static_cast<int>(totalElapsedTime / 3600);
+            int m = static_cast<int>((static_cast<int>(totalElapsedTime) % 3600) / 60);
+            int s = static_cast<int>(totalElapsedTime) % 60;
+
             std::string info;
             info += "FPS: " + std::to_string((int)fps) + "\n";
             info += "Creature: " + std::to_string(creatureCount) + "\n";
             info += "Plant:    " + std::to_string(plantCount2) + "\n";
             info += "Max Gen:  " + std::to_string(maxGen) + "\n";
             info += "Avg Q:    " + std::to_string(avgQ) + "\n";
-
+            // 経過時間を表示
+            info += "Time: " + std::to_string(h) + "h"
+                          + std::to_string(m) + "m"
+                          + std::to_string(s) + "s\n";
+            
             info += "\n--- Species Count ---\n";
             for(const auto& kv : speciesCount) {
                 info += kv.first + ": " + std::to_string(kv.second) + "\n";

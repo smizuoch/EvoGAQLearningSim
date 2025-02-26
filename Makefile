@@ -1,18 +1,24 @@
+NAME = sim
+
+SRCS = EvoGAQLearningSim.cpp
+
+OBJS = $(SRCS:.cpp=.o)
+
 CXX = g++
-CXXFLAGS = -Wall -std=c++17 -O2
-LIBS = -lsfml-graphics -lsfml-window -lsfml-system
 
-TARGET = EvoGAQLearningSim
-SOURCES = EvoGAQLearningSim.cpp
-OBJECTS = $(SOURCES:.cpp=.o)
+CXXFLAGS = -lsfml-graphics -lsfml-window -lsfml-system
 
-all: $(TARGET)
+all: $(NAME)
 
-$(TARGET): $(OBJECTS)
-    $(CXX) $(CXXFLAGS) -o $@ $(OBJECTS) $(LIBS)
-
-%.o: %.cpp
-    $(CXX) $(CXXFLAGS) -c $<
+$(NAME): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $(NAME) $(OBJS)
 
 clean:
-    rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJS)
+
+fclean: clean
+	rm -f $(NAME)
+
+re: fclean all
+
+.PHONY: all clean fclean re

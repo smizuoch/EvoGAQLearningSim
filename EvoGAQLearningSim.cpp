@@ -546,7 +546,7 @@ int main()
     window.setFramerateLimit(60);
 
     sf::Font font;
-    if (!font.loadFromFile("./Roboto-VariableFont_wdth,wght.ttf")) {
+    if (!font.loadFromFile("/app/Roboto.ttf")) {
         std::cerr << "Warning: Failed to load font. Text will not be visible.\n";
     }
 
